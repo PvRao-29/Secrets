@@ -14,7 +14,6 @@ def transition(stdscr):
         curses.start_color()
         curses.use_default_colors()
 
-        # 2) define neon‐green at idx 10 (0–1000 scale)
         if curses.can_change_color():
             neon_r = int(57  / 255 * 1000)
             neon_g = int(255 / 255 * 1000)
@@ -22,7 +21,6 @@ def transition(stdscr):
             curses.init_color(10, neon_r, neon_g, neon_b)
             curses.init_pair(1, 10, -1)
         else:
-            # fallback to bright green if you can’t redefine
             curses.init_pair(1, curses.COLOR_GREEN, -1)
             
         curses.curs_set(0)
@@ -61,10 +59,6 @@ def transition(stdscr):
         stdscr.refresh()
         
 def intro(stdscr):
-    """
-    Displays a large ASCII-art title and subtitle for Avalon.
-    Requires `pyfiglet` for rendering big fonts.
-    """
     curses.curs_set(0)
     stdscr.clear()
     
