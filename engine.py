@@ -79,8 +79,6 @@ class GameState:
     def start(self):
         clear_screen()
         time.sleep(2)
-        curses.wrapper(intro)
-        time.sleep(2)
         
         print(f"Your codename is {self.human.name}")
         time.sleep(2)
@@ -94,7 +92,8 @@ class GameState:
         
         for p in self.players:
             if p is self.human:
-                role_str = "Me"
+                role_str = self.human.role.name.capitalize()
+                print(f"{p.name} ({role_str}) (You): Hi!")
             else:
                 if self.human.role == Role.DETECTIVE:
                     candidates = self.human.known_roles.get('detective_candidates', [])
@@ -108,11 +107,36 @@ class GameState:
                         if p in lst:
                             role_str = key.name.capitalize()
                             break
-            print(f"{p.name} ({role_str}): Hi!")
+                print(f"{p.name} ({role_str}): Hi!")
             time.sleep(random.uniform(0.1, 1))
 
 if __name__ == '__main__':
     colors = ['Violet', 'Indigo', 'Blue', 'Green', 'Yellow', 'Orange', 'Red']
     random.shuffle(colors)
     game = GameState(colors)
-    game.start()
+
+    clear_screen()
+    time.sleep(0.5)
+    curses.wrapper(intro)
+    clear_screen()
+    time.sleep(0.5)
+    
+    while True:
+        print("=== Main Menu ===")
+        print("[R]ules")
+        print("[S]tart")
+        print("[Q]uit")
+        choice = input("Select an option: ").strip().upper()
+        if choice == 'R':
+            print_rules()
+            input("Press Enter to return to menu...")
+            clear_screen()
+        elif choice == 'S':
+            clear_screen()
+            game.start()
+            break
+        elif choice == 'Q':
+            print("Goodbye!")
+            break
+        else:
+            clear_screen()
