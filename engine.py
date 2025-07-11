@@ -3,6 +3,7 @@ import random, time, math
 import curses
 from helpers import *
 from aesthetics import *
+import pyfiglet
 
 class Role(Enum):
     WHISTLEBLOWER = auto()
@@ -52,7 +53,7 @@ class Player:
 class GameState:
     def __init__(self, player_names):
         self.players = []
-        self.leader_index = 0
+        self.leader_index = random.randint(0, 6)
         self.round = 1
         self.successes = 0
         self.failures = 0
@@ -81,110 +82,124 @@ class GameState:
         return sizes[self.round - 1]
 
     def rotate_leader(self):
-        self.leader_index = (self.leader_index + 1) % len(self.players)
+        self.leader_index += 1
+        if self.leader_index >= len(self.players):
+            self.leader_index = 0
 
     def propose_team(self):
         team_size = self.get_team_size()
         leader = self.players[self.leader_index]
-        print(f"{leader.name} is the leader. Propose a team of {team_size} members.")
 
         team = []
-        while len(team) < team_size:
-            choice = input(f"Select player {len(team)+1}: ").strip().capitalize()
-            candidate = next((p for p in self.players if p.name == choice), None)
-            if candidate and candidate not in team:
-                team.append(candidate)
-            else:
-                print("Invalid or duplicate selection.")
+        if leader is self.human:
+            styled_print(f"{leader.name} is the leader.", style='system', delay=0.05)
+            styled_print(f"Propose a team of {team_size} members.", style='system', delay=0.05)
+            while len(team) < team_size:
+                choice = input(f"Select player {len(team)+1}: ").strip().capitalize()
+                candidate = next((p for p in self.players if p.name == choice), None)
+                if candidate and candidate not in team:
+                    team.append(candidate)
+                else:
+                    styled_print("Invalid or duplicate selection.", style='warning', delay=0.02)
+        else:
+            styled_print(f"{leader.name} is the leader.", style='system', delay=random.uniform(2, 4.2))
+            team = random.sample(self.players, team_size)
+            styled_print(f"{leader.name} proposes: {', '.join([p.name for p in team])}", style='player', delay=0.05)
         return team
             
     def vote_on_team(self, team):
-        print("\nVoting phase: Approve or Reject the proposed team.\n")
+        styled_print("\nVoting phase: Approve or Reject the proposed team.\n", style='system', delay=0.05)
         votes = {}
-        for p in self.players:
+        voting_order = self.players[:]
+        random.shuffle(voting_order)
+        for p in voting_order:
             if p is self.human:
+                new_line()
                 vote = input("Do you approve the team? (Y/N): ").strip().upper()
+                new_line()
             else:
+                time.sleep(random.uniform(0.8, 2.2))  # Simulate real player thinking
                 vote = random.choice(['Y', 'N'])  # Placeholder AI
             votes[p.name] = vote
-            print(f"{p.name} voted {'Approve' if vote == 'Y' else 'Reject'}.")
+            styled_print(f"{p.name} voted {'Approve' if vote == 'Y' else 'Reject'}.", style='player' if p is not self.human else 'system', delay=0.03)
 
         approvals = sum(1 for v in votes.values() if v == 'Y')
         if approvals > len(self.players) // 2:
-            print("Team approved.")
+            new_line()
+            styled_print("Team approved.", style='system', delay=0.08)
+            new_line()
             return True
         else:
-            print("Team rejected.")
+            new_line()
+            styled_print("Team rejected.", style='warning', delay=0.08)
+            new_line()
             self.failed_votes += 1
             return False
         
     def execute_mission(self, team):
         fails_needed = 2 if self.round == 4 else 1
-        print(f"\nMission {self.round} begins. {fails_needed} fail vote(s) required to fail.\n")
+        styled_print(f"\nMission {self.round} begins. {fails_needed} fail vote(s) required to fail.\n", style='dramatic', delay=0.07)
         fail_votes = 0
 
-        for p in team:
+        action_order = team[:]
+        random.shuffle(action_order)
+        for p in action_order:
             if p is self.human:
                 if self.human.role in {Role.DON, Role.ASSASSIN, Role.INFILTRATOR}:
                     vote = input("Submit your mission action (P)ass/(F)ail): ").strip().upper()
                 else:
                     vote = 'P'
             else:
-                vote = 'F' if p.role in {Role.DON, Role.ASSASSIN, Role.INFILTRATOR} and random.random() < 0.5 else 'P'
+                time.sleep(random.uniform(0.8, 2.2))  # Simulate real player thinking
+                vote = 'F' if (p.role in {Role.DON, Role.ASSASSIN, Role.INFILTRATOR} and random.random() < 0.5) else 'P'
             if vote == 'F':
                 fail_votes += 1
 
         if fail_votes >= fails_needed:
-            print("Mission FAILED.")
+            styled_print("Mission FAILED.", style='error', delay=0.12, typewriter=True)
             self.failures += 1
             if self.failures == 3:
                 self.game_over(False)
         else:
-            print("Mission SUCCEEDED.")
+            styled_print("Mission SUCCEEDED.", style='system', delay=0.12, typewriter=True)
             self.successes += 1
             if self.successes == 3:
                 self.assassin_phase()
         self.round += 1
         self.failed_votes = 0
+        new_line()
     
     def game_over(self, good_won):
-        if good_won:
-            print("\nGood wins the game!")
-        else:
-            print("\nBad wins the game!")
+        styled_print("\n" + ("The good guys win." if good_won else "Conspirators win."), style='dramatic', delay=0.15, typewriter=True)
         exit()
 
     def assassin_phase(self):
-        print("\n3 successful missions! Assassin must now guess the Whistleblower.")
         assassin = next(p for p in self.players if p.role == Role.ASSASSIN)
         guess = random.choice([p for p in self.players if p != assassin])  # Placeholder
 
-        print(f"Assassin guessed: {guess.name}")
         if guess.role == Role.WHISTLEBLOWER:
-            print("Wrong.")
+            styled_print("Wrong.", style='system', delay=1)
+            styled_print(f"Assassin guessed: {guess.name}", style='player', delay=0.08)
+            styled_print("Conspirators win.", style='system', delay=0.1)
             self.game_over(False)
         else:
-            print("Good Prevails.")
+            styled_print("The Truth Prevails.", style='system', delay=0.1)
             self.game_over(True)
 
     def start(self):
         clear_screen()
         time.sleep(2)
-        
-        print(f"Your codename is {self.human.name}")
+        styled_print(f"Your codename is {self.human.name}", style='system', delay=0.08)
         time.sleep(2)
-        
-        print(f"You are the {self.human.role.name.capitalize()}")
+        styled_print(f"You are the {self.human.role.name.capitalize()}", style='dramatic', delay=0.12, typewriter=True)
         time.sleep(4)
-        
         clear_screen()
         curses.wrapper(transition)
         time.sleep(1)
-        
         for p in self.players:
             if p is self.human:
                 role_str = self.human.role.name.capitalize()
-                print(f"{p.name} ({role_str}) (You): Hi!")
+                styled_print(f"{p.name} ({role_str}) (You): Hi!", style='system', delay=0.04)
             else:
                 if self.human.role == Role.DETECTIVE:
                     candidates = self.human.known_roles.get('detective_candidates', [])
@@ -198,8 +213,9 @@ class GameState:
                         if p in lst:
                             role_str = key.name.capitalize()
                             break
-                print(f"{p.name} ({role_str}): Hi!")
-            time.sleep(random.uniform(0.1, 1))
+                styled_print(f"{p.name} ({role_str}): Hi!", style='player', delay=0.04)
+                time.sleep(random.uniform(0.8, 2.2))  # Simulate real player greeting
+        new_line()
             
         while self.round <= 5:
             team_approved = False
@@ -222,23 +238,38 @@ if __name__ == '__main__':
     curses.wrapper(intro)
     clear_screen()
     time.sleep(0.5)
-    
+
+    def draw_main_menu():
+        f = pyfiglet.Figlet(font='slant')
+        title = f.renderText('SECRETS')
+        print(f"\033[95m{title}\033[0m")
+        styled_print('Fate Awaits', style='dramatic', delay=0.04, typewriter=True)
+        new_line()
+        styled_print('MAIN MENU', style='system', delay=0.04)
+        new_line()
+        styled_print('[R]ules', style='system', delay=0.01)
+        styled_print('[S]tart', style='system', delay=0.01)
+        styled_print('[Q]uit', style='system', delay=0.01)
+        new_line()
+        styled_print('Choose your destiny...', style='dramatic', delay=0.02)
+
+    draw_main_menu()
+    choice = input('> ').strip().upper()
     while True:
-        print("=== Main Menu ===")
-        print("[R]ules")
-        print("[S]tart")
-        print("[Q]uit")
-        choice = input("Select an option: ").strip().upper()
         if choice == 'R':
             print_rules()
-            input("Press Enter to return to menu...")
+            input('Press Enter to return to the menu...')
             clear_screen()
+            draw_main_menu()
+            choice = input('> ').strip().upper()
         elif choice == 'S':
             clear_screen()
             game.start()
             break
         elif choice == 'Q':
-            print("Goodbye!")
+            styled_print('Goodbye!', style='dramatic', delay=0.05)
             break
         else:
             clear_screen()
+            draw_main_menu()
+            choice = input('> ').strip().upper()
