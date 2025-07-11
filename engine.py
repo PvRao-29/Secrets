@@ -1,8 +1,8 @@
 from enum import Enum, auto
-import random, math
-import time
+import random, time, math
 import curses
 from helpers import *
+from aesthetics import *
 
 class Role(Enum):
     WHISTLEBLOWER = auto()
@@ -76,6 +76,97 @@ class GameState:
         for player in self.players:
             player.receive_initial_info(self.players)
             
+    def get_team_size(self):
+        sizes = [3, 4, 4, 5, 5]
+        return sizes[self.round - 1]
+
+    def rotate_leader(self):
+        self.leader_index = (self.leader_index + 1) % len(self.players)
+
+    def propose_team(self):
+        team_size = self.get_team_size()
+        leader = self.players[self.leader_index]
+        print(f"{leader.name} is the leader. Propose a team of {team_size} members.")
+
+        team = []
+        while len(team) < team_size:
+            choice = input(f"Select player {len(team)+1}: ").strip().capitalize()
+            candidate = next((p for p in self.players if p.name == choice), None)
+            if candidate and candidate not in team:
+                team.append(candidate)
+            else:
+                print("Invalid or duplicate selection.")
+        return team
+            
+    def vote_on_team(self, team):
+        print("\nVoting phase: Approve or Reject the proposed team.\n")
+        votes = {}
+        for p in self.players:
+            if p is self.human:
+                vote = input("Do you approve the team? (Y/N): ").strip().upper()
+            else:
+                vote = random.choice(['Y', 'N'])  # Placeholder AI
+            votes[p.name] = vote
+            print(f"{p.name} voted {'Approve' if vote == 'Y' else 'Reject'}.")
+
+        approvals = sum(1 for v in votes.values() if v == 'Y')
+        if approvals > len(self.players) // 2:
+            print("Team approved.")
+            return True
+        else:
+            print("Team rejected.")
+            self.failed_votes += 1
+            return False
+        
+    def execute_mission(self, team):
+        fails_needed = 2 if self.round == 4 else 1
+        print(f"\nMission {self.round} begins. {fails_needed} fail vote(s) required to fail.\n")
+        fail_votes = 0
+
+        for p in team:
+            if p is self.human:
+                if self.human.role in {Role.DON, Role.ASSASSIN, Role.INFILTRATOR}:
+                    vote = input("Submit your mission action (P)ass/(F)ail): ").strip().upper()
+                else:
+                    vote = 'P'
+            else:
+                vote = 'F' if p.role in {Role.DON, Role.ASSASSIN, Role.INFILTRATOR} and random.random() < 0.5 else 'P'
+            if vote == 'F':
+                fail_votes += 1
+
+        if fail_votes >= fails_needed:
+            print("Mission FAILED.")
+            self.failures += 1
+            if self.failures == 3:
+                self.game_over(False)
+        else:
+            print("Mission SUCCEEDED.")
+            self.successes += 1
+            if self.successes == 3:
+                self.assassin_phase()
+        self.round += 1
+        self.failed_votes = 0
+    
+    def game_over(self, good_won):
+        if good_won:
+            print("\nGood wins the game!")
+        else:
+            print("\nBad wins the game!")
+        exit()
+
+    def assassin_phase(self):
+        print("\n3 successful missions! Assassin must now guess the Whistleblower.")
+        assassin = next(p for p in self.players if p.role == Role.ASSASSIN)
+        guess = random.choice([p for p in self.players if p != assassin])  # Placeholder
+
+        print(f"Assassin guessed: {guess.name}")
+        if guess.role == Role.WHISTLEBLOWER:
+            print("Wrong.")
+            self.game_over(False)
+        else:
+            print("Good Prevails.")
+            self.game_over(True)
+
     def start(self):
         clear_screen()
         time.sleep(2)
@@ -109,6 +200,17 @@ class GameState:
                             break
                 print(f"{p.name} ({role_str}): Hi!")
             time.sleep(random.uniform(0.1, 1))
+            
+        while self.round <= 5:
+            team_approved = False
+            while not team_approved:
+                team = self.propose_team()
+                team_approved = self.vote_on_team(team)
+                if not team_approved and self.failed_votes == 5:
+                    print("Five consecutive rejections. Bad team wins.")
+                    self.game_over(False)
+                self.rotate_leader()
+            self.execute_mission(team)
 
 if __name__ == '__main__':
     colors = ['Violet', 'Indigo', 'Blue', 'Green', 'Yellow', 'Orange', 'Red']
