@@ -23,7 +23,12 @@ class Player:
         self.role = role
         self.alive = True
         self.known_roles = {}
-        self.beliefs = {}
+        self.memory = {
+            "history": [],
+            "missions": [],
+            "votes": [],
+            "beliefs": {}
+        }
     
     def receive_initial_info(self, all_players):
         if self.role == Role.WHISTLEBLOWER:
@@ -97,12 +102,12 @@ class GameState:
         if leader is self.human:
             styled_print(f"{leader.name} is the leader.", style='system', delay=0.05)
             styled_print(f"Propose a team of {team_size} members.", style='system', delay=0.05)
-            while len(team) < team_size:
-                choice = input(f"Select player {len(team)+1}: ").strip().capitalize()
-                candidate = next((p for p in self.players if p.name == choice), None)
-                if candidate and candidate not in team:
-                    team.append(candidate)
-                else:
+        while len(team) < team_size:
+            choice = input(f"Select player {len(team)+1}: ").strip().capitalize()
+            candidate = next((p for p in self.players if p.name == choice), None)
+            if candidate and candidate not in team:
+                team.append(candidate)
+            else:
                     styled_print("Invalid or duplicate selection.", style='warning', delay=0.02)
         else:
             styled_print(f"{leader.name} is the leader.", style='system', delay=random.uniform(2, 4.2))
@@ -125,6 +130,8 @@ class GameState:
                 vote = random.choice(['Y', 'N'])  # Placeholder AI
             votes[p.name] = vote
             styled_print(f"{p.name} voted {'Approve' if vote == 'Y' else 'Reject'}.", style='player' if p is not self.human else 'system', delay=0.03)
+            # Update memory for this vote
+            p.memory['votes'].append({'round': self.round, 'team': [x.name for x in team], 'vote': vote})
 
         approvals = sum(1 for v in votes.values() if v == 'Y')
         if approvals > len(self.players) // 2:
@@ -157,6 +164,8 @@ class GameState:
                 vote = 'F' if (p.role in {Role.DON, Role.ASSASSIN, Role.INFILTRATOR} and random.random() < 0.5) else 'P'
             if vote == 'F':
                 fail_votes += 1
+            # Update memory for this mission action
+            p.memory['missions'].append({'round': self.round, 'team': [x.name for x in team], 'action': vote})
 
         if fail_votes >= fails_needed:
             styled_print("Mission FAILED.", style='error', delay=0.12, typewriter=True)
@@ -189,44 +198,84 @@ class GameState:
             styled_print("The Truth Prevails.", style='system', delay=0.1)
             self.game_over(True)
 
-    def discussion_phase(self):
-        styled_print("\n[DISCUSSION PHASE] You have 2 minutes to discuss before the team proposal.", style='dramatic', delay=0.04)
+    def get_leader(self):
+        return self.players[self.leader_index]
+
+    def suggest_team(self, leader, team_size):
+        # Heuristic: pick self + most trusted (least accused, most agreed with, not failed missions)
+        # For now, just pick self + random others, but can be improved
+        trusted = [p for p in self.players if p != leader]
+        random.shuffle(trusted)
+        team = [leader] + trusted[:team_size-1]
+        return team
+
+    def get_consensus_team(self, discussion_history, team_size):
+        # Find the most frequently mentioned team in the last N discussion messages
+        mentions = {}
+        for msg in discussion_history[-15:]:
+            text = msg['text'].lower()
+            for p in self.players:
+                if p.name.lower() in text:
+                    mentions[p.name] = mentions.get(p.name, 0) + 1
+        # Pick top N mentioned players
+        sorted_mentions = sorted(mentions.items(), key=lambda x: -x[1])
+        consensus_team = [name for name, _ in sorted_mentions[:team_size]]
+        # If not enough consensus, return empty
+        if len(consensus_team) < team_size:
+            return []
+        # Map names back to player objects
+        return [p for p in self.players if p.name in consensus_team]
+
+    def discussion_phase(self, leader, team_size):
+        styled_print(f"\n[DISCUSSION PHASE] Leader is {leader.name}. They will start by suggesting a team of {team_size}.", style='dramatic', delay=0.04)
         new_line()
-        start_time = datetime.datetime.now()
-        history = []
+        # Leader suggests a team
+        leader_team = self.suggest_team(leader, team_size)
+        leader_team_names = ', '.join([p.name for p in leader_team])
+        styled_print(f"{leader.name} (Leader) suggests: {leader_team_names}", style='player', delay=0.04)
+        discussion_history = [{'round': self.round, 'speaker': leader.name, 'text': f"I suggest {leader_team_names} for the mission."}]
+        for pl in self.players:
+            pl.memory['history'].append(discussion_history[0])
+        # Discussion loop: each player (including human) can comment on the suggestion
         speakers = self.players[:]
         random.shuffle(speakers)
-        skip = False
-        while (datetime.datetime.now() - start_time).total_seconds() < 120 and not skip:
-            for p in speakers:
-                if (datetime.datetime.now() - start_time).total_seconds() >= 120 or skip:
+        for p in speakers:
+            if p is leader:
+                continue  # Leader already spoke
+            if p is self.human:
+                styled_print("Your turn to discuss the leader's suggestion (or type /skip to end discussion):", style='system', delay=0.01)
+                msg = input('> ').strip()
+                if msg.lower() == '/skip':
+                    styled_print("[Discussion skipped]", style='warning', delay=0.01)
                     break
-                if p is self.human:
-                    styled_print("Your turn to speak (or type /skip to end discussion):", style='system', delay=0.01)
-                    msg = input('> ').strip()
-                    if msg.lower() == '/skip':
-                        skip = True
-                        styled_print("[Discussion skipped]", style='warning', delay=0.01)
-                        break
-                    if msg:
-                        history.append({'speaker': p.name, 'text': msg})
-                        styled_print(f"{p.name}: {msg}", style='system', delay=0.01)
-                else:
-                    # Agent decides to speak with 60% chance, or always if mentioned in last message
-                    should_speak = random.random() < 0.6 or (history and p.name.lower() in history[-1]['text'].lower())
-                    if should_speak:
-                        agent_msg = ollama_agent_message(p.name, history)
-                        history.append({'speaker': p.name, 'text': agent_msg})
-                        styled_print(f"{p.name}: {agent_msg}", style='player', delay=0.04)
-                        # 30% chance to immediately speak again
-                        if random.random() < 0.3 and (datetime.datetime.now() - start_time).total_seconds() < 120:
-                            agent_msg2 = ollama_agent_message(p.name, history)
-                            history.append({'speaker': p.name, 'text': agent_msg2})
-                            styled_print(f"{p.name}: {agent_msg2}", style='player', delay=0.04)
-                    time.sleep(random.uniform(0.7, 1.7))
+                if msg:
+                    entry = {'round': self.round, 'speaker': p.name, 'text': msg}
+                    discussion_history.append(entry)
+                    styled_print(f"{p.name}: {msg}", style='system', delay=0.01)
+                    for pl in self.players:
+                        pl.memory['history'].append(entry)
+            else:
+                agent_msg = ollama_agent_message(p, discussion_history, p.memory["missions"], p.memory["votes"])
+                if not agent_msg or not agent_msg.strip():
+                    agent_msg = "(remains silent)"
+                # Remove any role reveals
+                for role in ["cop", "detective", "president", "don", "assassin", "infiltrator", "whistleblower"]:
+                    agent_msg = agent_msg.replace(f"({role})", "").replace(f"{role.capitalize()}: ", "")
+                entry = {'round': self.round, 'speaker': p.name, 'text': agent_msg}
+                discussion_history.append(entry)
+                styled_print(f"{p.name}: {agent_msg}", style='player', delay=0.04)
+                for pl in self.players:
+                    pl.memory['history'].append(entry)
+                time.sleep(random.uniform(0.7, 1.7))
         new_line()
         styled_print("[Discussion phase ended]", style='dramatic', delay=0.01)
         new_line()
+        # Try to get consensus team
+        consensus_team = self.get_consensus_team(discussion_history, team_size)
+        if consensus_team:
+            return consensus_team
+        else:
+            return leader_team
 
     def start(self):
         clear_screen()
@@ -239,10 +288,13 @@ class GameState:
         curses.wrapper(transition)
         time.sleep(1)
         while self.round <= 5:
-            self.discussion_phase()
             team_approved = False
             while not team_approved:
-                team = self.propose_team()
+                leader = self.get_leader()
+                team_size = self.get_team_size()
+                # Discussion phase: get team suggestion
+                team = self.discussion_phase(leader, team_size)
+                # Voting phase
                 team_approved = self.vote_on_team(team)
                 curses.wrapper(transition)
                 if not team_approved and self.failed_votes == 5:
@@ -261,7 +313,7 @@ if __name__ == '__main__':
     curses.wrapper(intro)
     clear_screen()
     time.sleep(0.5)
-
+    
     def draw_main_menu():
         f = pyfiglet.Figlet(font='slant')
         title = f.renderText('SECRETS')
