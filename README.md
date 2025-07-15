@@ -8,7 +8,7 @@ A cinematic, AI-powered social deduction game for your terminal.
 
 SECRETS is a 7-player social deduction game inspired by classics like Avalon and Secret Hitler, but with a modern, hacker-movie twist. Play as a lone human against a cast of AI-powered agents, each with their own hidden roles, motives, and personalities. Can you outwit the conspirators and survive the shadows?
 
-- **Cinematic terminal experience** with animated intros, neon colors, and dramatic pacing.
+- **Cinematic terminal experience** with animated intros, bright colors, and dramatic pacing.
 - **AI agents** powered by [Ollama](https://ollama.com/) and the Qwen 2.5 Coder 7B model, generating real-time table talk and strategy.
 - **Imperfect information**: Roles, alliances, and betrayals—no two games are the same.
 - **Discussion phase**: Argue, accuse, and strategize in a lively, LLM-driven chat before every mission.
@@ -17,10 +17,10 @@ SECRETS is a 7-player social deduction game inspired by classics like Avalon and
 
 ## 🕹️ How to Play
 
-1. **Start the game**: Launch from your terminal. Enjoy the cinematic intro and main menu.
+1. **Start the game**: Launch from your terminal. Enjoy the cinematic intro and main menu. For the best experience use the homebrew terminal layout.
 2. **Read the rules**: Press `R` at the main menu for a quick overview.
 3. **Begin a game**: Press `S` to start. You’ll be assigned a secret role.
-4. **Discussion phase**: Chat with AI agents (powered by Qwen) before each mission. Type `/skip` to fast-forward during development.
+4. **Discussion phase**: Chat with the other players before each mission.
 5. **Propose and vote**: Take turns proposing teams and voting on missions. Watch for betrayals!
 6. **Victory or defeat**: Win as the Good team by completing missions, or as the Conspirators by sabotaging them.
 
@@ -51,13 +51,12 @@ SECRETS is a 7-player social deduction game inspired by classics like Avalon and
 - Stylish, readable terminal UI
 - Real-time, LLM-powered agent discussion
 - Dynamic, replayable deduction gameplay
-- Dev tools: `/skip` command for fast testing
 
 ---
 
 ## 🧑‍💻 Credits
 
-- **Game Design & Code:** [Your Name]
+- **Game Design & Code:** Pranshu Rao
 - **AI Integration:** [Ollama](https://ollama.com/), Qwen 2.5 Coder 7B
 - **ASCII Art:** [pyfiglet](https://github.com/pwaller/pyfiglet)
 
