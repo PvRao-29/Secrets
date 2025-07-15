@@ -3,7 +3,10 @@ import random, time, math
 import curses
 from helpers import *
 from aesthetics import *
+from agents import *
 import pyfiglet
+import requests
+import datetime
 
 class Role(Enum):
     WHISTLEBLOWER = auto()
@@ -175,7 +178,7 @@ class GameState:
 
     def assassin_phase(self):
         assassin = next(p for p in self.players if p.role == Role.ASSASSIN)
-        guess = random.choice([p for p in self.players if p != assassin])  # Placeholder
+        guess = random.choice([p for p in self.players if p != assassin]) #### Placeholder
 
         if guess.role == Role.WHISTLEBLOWER:
             styled_print("Wrong.", style='system', delay=1)
@@ -185,6 +188,45 @@ class GameState:
         else:
             styled_print("The Truth Prevails.", style='system', delay=0.1)
             self.game_over(True)
+
+    def discussion_phase(self):
+        styled_print("\n[DISCUSSION PHASE] You have 2 minutes to discuss before the team proposal.", style='dramatic', delay=0.04)
+        new_line()
+        start_time = datetime.datetime.now()
+        history = []
+        speakers = self.players[:]
+        random.shuffle(speakers)
+        skip = False
+        while (datetime.datetime.now() - start_time).total_seconds() < 120 and not skip:
+            for p in speakers:
+                if (datetime.datetime.now() - start_time).total_seconds() >= 120 or skip:
+                    break
+                if p is self.human:
+                    styled_print("Your turn to speak (or type /skip to end discussion):", style='system', delay=0.01)
+                    msg = input('> ').strip()
+                    if msg.lower() == '/skip':
+                        skip = True
+                        styled_print("[Discussion skipped]", style='warning', delay=0.01)
+                        break
+                    if msg:
+                        history.append({'speaker': p.name, 'text': msg})
+                        styled_print(f"{p.name}: {msg}", style='system', delay=0.01)
+                else:
+                    # Agent decides to speak with 60% chance, or always if mentioned in last message
+                    should_speak = random.random() < 0.6 or (history and p.name.lower() in history[-1]['text'].lower())
+                    if should_speak:
+                        agent_msg = ollama_agent_message(p.name, history)
+                        history.append({'speaker': p.name, 'text': agent_msg})
+                        styled_print(f"{p.name}: {agent_msg}", style='player', delay=0.04)
+                        # 30% chance to immediately speak again
+                        if random.random() < 0.3 and (datetime.datetime.now() - start_time).total_seconds() < 120:
+                            agent_msg2 = ollama_agent_message(p.name, history)
+                            history.append({'speaker': p.name, 'text': agent_msg2})
+                            styled_print(f"{p.name}: {agent_msg2}", style='player', delay=0.04)
+                    time.sleep(random.uniform(0.7, 1.7))
+        new_line()
+        styled_print("[Discussion phase ended]", style='dramatic', delay=0.01)
+        new_line()
 
     def start(self):
         clear_screen()
@@ -196,32 +238,13 @@ class GameState:
         clear_screen()
         curses.wrapper(transition)
         time.sleep(1)
-        for p in self.players:
-            if p is self.human:
-                role_str = self.human.role.name.capitalize()
-                styled_print(f"{p.name} ({role_str}) (You): Hi!", style='system', delay=0.04)
-            else:
-                if self.human.role == Role.DETECTIVE:
-                    candidates = self.human.known_roles.get('detective_candidates', [])
-                    if p in candidates:
-                        role_str = "Don OR Whistleblower"
-                    else:
-                        role_str = "Unknown"
-                else:
-                    role_str = "Unknown"
-                    for key, lst in self.human.known_roles.items():
-                        if p in lst:
-                            role_str = key.name.capitalize()
-                            break
-                styled_print(f"{p.name} ({role_str}): Hi!", style='player', delay=0.04)
-                time.sleep(random.uniform(0.8, 2.2))  # Simulate real player greeting
-        new_line()
-            
         while self.round <= 5:
+            self.discussion_phase()
             team_approved = False
             while not team_approved:
                 team = self.propose_team()
                 team_approved = self.vote_on_team(team)
+                curses.wrapper(transition)
                 if not team_approved and self.failed_votes == 5:
                     print("Five consecutive rejections. Bad team wins.")
                     self.game_over(False)
