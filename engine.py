@@ -1,6 +1,7 @@
 from enum import Enum, auto
 import random, time, math
 import curses
+import itertools
 from helpers import *
 from aesthetics import *
 from agents import *
@@ -27,6 +28,7 @@ class Player:
             "history": [],
             "missions": [],
             "votes": [],
+            # beliefs: {player_name: trust_score}, positive = trust, negative = suspicion
             "beliefs": {}
         }
     
@@ -58,6 +60,28 @@ class Player:
             self.known_roles[Role.DON] = [don]
         # Cop, President have no initial info
 
+    def initialize_beliefs(self, all_players):
+        # Start neutral (0) for all other players
+        for p in all_players:
+            if p.name != self.name:
+                self.memory["beliefs"][p.name] = 0
+
+    def update_belief(self, player_name, delta):
+        # Adjust trust/suspicion for a player
+        if player_name == self.name:
+            return
+        if player_name not in self.memory["beliefs"]:
+            self.memory["beliefs"][player_name] = 0
+        self.memory["beliefs"][player_name] += delta
+
+    def get_trusted(self):
+        # Return list of players this agent trusts (trust_score > 0)
+        return [name for name, score in self.memory["beliefs"].items() if score > 0]
+
+    def get_suspected(self):
+        # Return list of players this agent suspects (trust_score < 0)
+        return [name for name, score in self.memory["beliefs"].items() if score < 0]
+
 class GameState:
     def __init__(self, player_names):
         self.players = []
@@ -71,6 +95,9 @@ class GameState:
         human_name = player_names[0]
         self.human = next(p for p in self.players if p.name == human_name)
         self.distribute_initial_info()
+        # Initialize beliefs for all players
+        for p in self.players:
+            p.initialize_beliefs(self.players)
 
     def assign_roles(self, names):
         roles = [
@@ -127,9 +154,9 @@ class GameState:
                 new_line()
             else:
                 time.sleep(random.uniform(0.8, 2.2))  # Simulate real player thinking
-                vote = random.choice(['Y', 'N'])  # Placeholder AI
+                vote = agent_vote(p, team, p.memory, p.memory['history'][-15:], self.round)
             votes[p.name] = vote
-            styled_print(f"{p.name} voted {'Approve' if vote == 'Y' else 'Reject'}.", style='player' if p is not self.human else 'system', delay=0.03)
+            styled_print(f"{p.name} voted {'Approve' if vote == 'Y' else 'Reject' }.", style='player' if p is not self.human else 'system', delay=0.03)
             # Update memory for this vote
             p.memory['votes'].append({'round': self.round, 'team': [x.name for x in team], 'vote': vote})
 
@@ -161,13 +188,14 @@ class GameState:
                     vote = 'P'
             else:
                 time.sleep(random.uniform(0.8, 2.2))  # Simulate real player thinking
-                vote = 'F' if (p.role in {Role.DON, Role.ASSASSIN, Role.INFILTRATOR} and random.random() < 0.5) else 'P'
+                vote = agent_mission_action(p, team, p.memory, p.memory['history'][-15:], self.round)
             if vote == 'F':
                 fail_votes += 1
             # Update memory for this mission action
             p.memory['missions'].append({'round': self.round, 'team': [x.name for x in team], 'action': vote})
 
-        if fail_votes >= fails_needed:
+        mission_failed = fail_votes >= fails_needed
+        if mission_failed:
             styled_print("Mission FAILED.", style='error', delay=0.12, typewriter=True)
             self.failures += 1
             if self.failures == 3:
@@ -177,10 +205,36 @@ class GameState:
             self.successes += 1
             if self.successes == 3:
                 self.assassin_phase()
+        # Update beliefs after mission
+        self.update_beliefs_after_round(team, mission_failed)
         self.round += 1
         self.failed_votes = 0
         new_line()
-    
+
+    def update_beliefs_after_round(self, team, mission_failed):
+        # Agents update beliefs based on mission outcome and voting patterns
+        for agent in self.players:
+            # Mission outcome: adjust beliefs for team members
+            for p in team:
+                if p.name == agent.name:
+                    continue
+                if mission_failed:
+                    agent.update_belief(p.name, -1)  # More suspicious
+                else:
+                    agent.update_belief(p.name, 1)   # More trusting
+            # Voting pattern: trust those who voted the same, suspect those who didn't
+            if agent.memory['votes']:
+                last_vote = agent.memory['votes'][-1]
+                agent_vote = last_vote['vote']
+                for other in self.players:
+                    if other.name == agent.name or not other.memory['votes']:
+                        continue
+                    other_vote = other.memory['votes'][-1]['vote']
+                    if agent_vote == other_vote:
+                        agent.update_belief(other.name, 0.5)
+                    else:
+                        agent.update_belief(other.name, -0.5)
+
     def game_over(self, good_won):
         styled_print("\n" + ("The good guys win." if good_won else "Conspirators win."), style='dramatic', delay=0.15, typewriter=True)
         exit()
@@ -236,37 +290,46 @@ class GameState:
         discussion_history = [{'round': self.round, 'speaker': leader.name, 'text': f"I suggest {leader_team_names} for the mission."}]
         for pl in self.players:
             pl.memory['history'].append(discussion_history[0])
-        # Discussion loop: each player (including human) can comment on the suggestion
-        speakers = self.players[:]
-        random.shuffle(speakers)
-        for p in speakers:
-            if p is leader:
-                continue  # Leader already spoke
-            if p is self.human:
-                styled_print("Your turn to discuss the leader's suggestion (or type /skip to end discussion):", style='system', delay=0.01)
-                msg = input('> ').strip()
-                if msg.lower() == '/skip':
-                    styled_print("[Discussion skipped]", style='warning', delay=0.01)
-                    break
-                if msg:
-                    entry = {'round': self.round, 'speaker': p.name, 'text': msg}
+        # Discussion loop: repeat until human types 'done' or '/skip'
+        done = False
+        skip_discussion = False
+        while not done and not skip_discussion:
+            # Always ensure human is included in the round, after all agents
+            agent_speakers = [p for p in self.players if p is not leader and p is not self.human]
+            random.shuffle(agent_speakers)
+            speakers = agent_speakers + [self.human]  # Human always last in the round
+            for p in speakers:
+                if p is leader:
+                    continue  # Leader already spoke
+                if p is self.human:
+                    styled_print("Your turn to discuss the leader's suggestion (type 'done' to end discussion, or /skip to skip):", style='system', delay=0.01)
+                    msg = input('> ').strip()
+                    if msg.lower() == '/skip':
+                        styled_print("[Discussion skipped]", style='warning', delay=0.01)
+                        skip_discussion = True
+                        break
+                    if msg.lower() == 'done':
+                        done = True
+                        break
+                    if msg:
+                        entry = {'round': self.round, 'speaker': p.name, 'text': msg}
+                        discussion_history.append(entry)
+                        styled_print(f"{p.name}: {msg}", style='system', delay=0.01)
+                        for pl in self.players:
+                            pl.memory['history'].append(entry)
+                else:
+                    agent_msg = agent_discussion(p, leader_team, p.memory, discussion_history[-15:], self.round)
+                    if not agent_msg or not agent_msg.strip():
+                        agent_msg = "(remains silent)"
+                    # Remove any role reveals
+                    for role in ["cop", "detective", "president", "don", "assassin", "infiltrator", "whistleblower"]:
+                        agent_msg = agent_msg.replace(f"({role})", "").replace(f"{role.capitalize()}: ", "")
+                    entry = {'round': self.round, 'speaker': p.name, 'text': agent_msg}
                     discussion_history.append(entry)
-                    styled_print(f"{p.name}: {msg}", style='system', delay=0.01)
+                    styled_print(f"{p.name}: {agent_msg}", style='player', delay=0.04)
                     for pl in self.players:
                         pl.memory['history'].append(entry)
-            else:
-                agent_msg = ollama_agent_message(p, discussion_history, p.memory["missions"], p.memory["votes"])
-                if not agent_msg or not agent_msg.strip():
-                    agent_msg = "(remains silent)"
-                # Remove any role reveals
-                for role in ["cop", "detective", "president", "don", "assassin", "infiltrator", "whistleblower"]:
-                    agent_msg = agent_msg.replace(f"({role})", "").replace(f"{role.capitalize()}: ", "")
-                entry = {'round': self.round, 'speaker': p.name, 'text': agent_msg}
-                discussion_history.append(entry)
-                styled_print(f"{p.name}: {agent_msg}", style='player', delay=0.04)
-                for pl in self.players:
-                    pl.memory['history'].append(entry)
-                time.sleep(random.uniform(0.7, 1.7))
+                    time.sleep(random.uniform(0.7, 1.7))
         new_line()
         styled_print("[Discussion phase ended]", style='dramatic', delay=0.01)
         new_line()
@@ -302,6 +365,38 @@ class GameState:
                     self.game_over(False)
                 self.rotate_leader()
             self.execute_mission(team)
+
+# --- AGENT LOGIC FUNCTIONS ---
+def agent_discussion(agent, team, memory, discussion_history, round_number):
+    # Use LLM for agentic discussion
+    return ollama_agent_message(
+        agent,
+        discussion_history,
+        memory['missions'],
+        memory['votes'],
+        round_number,
+        team
+    )
+
+def agent_vote(agent, team, memory, discussion_history, round_number):
+    return ollama_agent_vote(
+        agent,
+        team,
+        discussion_history,
+        memory['missions'],
+        memory['votes'],
+        round_number
+    )
+
+def agent_mission_action(agent, team, memory, discussion_history, round_number):
+    return ollama_agent_mission_action(
+        agent,
+        team,
+        discussion_history,
+        memory['missions'],
+        memory['votes'],
+        round_number
+    )
 
 if __name__ == '__main__':
     colors = ['Violet', 'Indigo', 'Blue', 'Green', 'Yellow', 'Orange', 'Red']

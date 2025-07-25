@@ -62,3 +62,22 @@ def styled_print(msg, style='system', delay=0.01, typewriter=False):
             
 def new_line():
     print()
+    
+def _format_beliefs(beliefs_dict):
+    """Return a concise human-readable string of Trust / Suspect / Unsure lists."""
+    trust = [n for n, s in beliefs_dict.items() if s > 0]
+    suspect = [n for n, s in beliefs_dict.items() if s < 0]
+    neutral = [n for n, s in beliefs_dict.items() if s == 0]
+    parts = []
+    if trust:
+        parts.append("Trust:" + ", ".join(trust))
+    if suspect:
+        parts.append("Suspect:" + ", ".join(suspect))
+    if neutral:
+        parts.append("Unsure:" + ", ".join(neutral))
+    return "; ".join(parts) if parts else "No strong beliefs yet."
+
+
+def _format_history(entries):
+    """Return last few discussion lines as "Speaker: text" joined by newlines."""
+    return "\n".join(f"{e['speaker']}: {e['text']}" for e in entries)

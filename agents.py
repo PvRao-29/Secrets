@@ -2,6 +2,8 @@ import requests
 import json
 from engine import Role
 import random
+from helpers import _format_beliefs, _format_history
+
 
 AGENT_RULES_CONTEXT = '''
 GAME RULES & ROLE KNOWLEDGE:
@@ -52,17 +54,19 @@ def _sanitize_agent_output(text, player_names):
     text = text.replace("::", ":").strip()
     return text
 
-def ollama_agent_message(player, history, missions, votes):
+def ollama_agent_message(player, history, missions, votes, round_number, current_team):
     player_names = [p['speaker'] for p in history[-10:]]
+    history_slice = history[-8:]
     prompt = AGENT_RULES_CONTEXT + "\n"
     prompt += (
-        f"You are {player.name}, playing as a secret role. "
-        "You are in a social deduction game.\n"
-        "Recent discussion:\n"
+        f"You are {player.name}. Round {round_number} is underway in a 7-player social deduction game.\n"
+        f"Proposed mission team: {', '.join(p.name for p in current_team)}\n"
+        f"Your private beliefs: {_format_beliefs(player.memory['beliefs'])}\n"
+        f"Your mission history: {missions}\n"
+        f"Your voting history: {votes}\n"
+        "Recent discussion:\n" + _format_history(history_slice) + "\n\n"
+        "Respond in-character as a concise sentence or two. Do not reveal roles."
     )
-    for msg in history[-5:]:
-        prompt += f"{msg['speaker']}: {msg['text']}\n"
-    prompt += "\nWhat do you say next? Keep it short, in-character, and never reveal or speculate about any roles. If you agree with someone, say so. If you disagree, say so. If you have nothing to add, say something neutral or supportive."
     data = {
         "model": "qwen7b",
         "prompt": prompt,
@@ -89,3 +93,79 @@ def ollama_agent_message(player, history, missions, votes):
     if not response.strip():
         response = "Let's give this team a try." if random.random() < 0.5 else "I agree with the leader."
     return response
+
+def ollama_agent_vote(player, team, history, missions, votes, round_number):
+    player_names = [p['speaker'] for p in history[-10:]]
+    history_slice = history[-8:]
+    prompt = AGENT_RULES_CONTEXT + "\n"
+    prompt += (
+        f"You are {player.name}. Round {round_number}. A vote to approve the team is happening.\n"
+        f"Proposed team: {', '.join(p.name for p in team)}\n"
+        f"Your private beliefs: {_format_beliefs(player.memory['beliefs'])}\n"
+        f"Your mission history: {missions}\n"
+        f"Your voting history: {votes}\n"
+        "Recent discussion:\n" + _format_history(history_slice) + "\n\n"
+        "Should you vote Approve? Reply ONLY with a single character 'Y' or 'N'."
+    )
+    data = {
+        "model": "qwen7b",
+        "prompt": prompt,
+        "stream": False
+    }
+    r = requests.post("http://localhost:11434/api/generate", json=data, timeout=30)
+    try:
+        response = r.json().get("response", "").strip().upper()
+    except Exception:
+        lines = r.text.strip().splitlines()
+        response = ""
+        for line in lines:
+            try:
+                obj = json.loads(line)
+                if "response" in obj:
+                    response = obj["response"].strip().upper()
+                    break
+            except Exception:
+                continue
+    if not response or response[0] not in ['Y', 'N']:
+        response = random.choice(['Y', 'N'])
+    return response[0]
+
+def ollama_agent_mission_action(player, team, history, missions, votes, round_number):
+    player_names = [p['speaker'] for p in history[-10:]]
+    history_slice = history[-8:]
+    prompt = AGENT_RULES_CONTEXT + "\n"
+    prompt += (
+        f"You are {player.name}. Round {round_number}. The mission is underway.\n"
+        f"Mission team: {', '.join(p.name for p in team)}\n"
+        f"Your private beliefs: {_format_beliefs(player.memory['beliefs'])}\n"
+        f"Your mission history: {missions}\n"
+        f"Your voting history: {votes}\n"
+        "Recent discussion:\n" + _format_history(history_slice) + "\n\n"
+        "Should you help the mission succeed or sabotage it? Reply ONLY with 'P' (Pass) or 'F' (Fail)."
+    )
+    data = {
+        "model": "qwen7b",
+        "prompt": prompt,
+        "stream": False
+    }
+    r = requests.post("http://localhost:11434/api/generate", json=data, timeout=30)
+    try:
+        response = r.json().get("response", "").strip().upper()
+    except Exception:
+        lines = r.text.strip().splitlines()
+        response = ""
+        for line in lines:
+            try:
+                obj = json.loads(line)
+                if "response" in obj:
+                    response = obj["response"].strip().upper()
+                    break
+            except Exception:
+                continue
+    if not response or response[0] not in ['P', 'F']:
+        # Default: good always pass, evil random
+        if player.role in [Role.DON, Role.ASSASSIN, Role.INFILTRATOR]:
+            response = random.choice(['P', 'F'])
+        else:
+            response = 'P'
+    return response[0]
